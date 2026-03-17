@@ -2,7 +2,7 @@
 
 A free, browser-based 2D floor plan editor. Draw walls, furnish rooms from a catalog of 80+ items, manage multiple floors, and print your plans — all from the browser, no install needed.
 
-> **Credit:** This project is heavily inspired by (and shares its name with) the original [Arcada](https://github.com/Arcada-Planner/arcada) floor planner. We rewrote the entire codebase from scratch with a different tech stack and added new features.
+> **Credit:** This project is heavily inspired by (and shares its name with) the original [Arcada](https://github.com/mehanix/arcada) floor planner. We rewrote the entire codebase from scratch with a different tech stack and added new features.
 
 ![Editor overview](docs/screenshots/editor-overview.png)
 <!-- TODO: replace with an actual screenshot -->
