@@ -1,0 +1,21 @@
+# Auto-detect text files and normalise line endings
+* text=auto
+
+# Force LF on web sources
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+
+# Mark SVG assets as binary to avoid diff noise
+*.svg binary
+
+# Mark images as binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
