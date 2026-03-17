@@ -40,7 +40,7 @@ export function FurniturePanel() {
       <div className="items-grid">
         {current.items.map(item => (
           <button key={item.name} className="furniture-item" onClick={() => addItem(item as unknown as CatalogItem)}>
-            <img src={`/assets/2d/${item.imagePath}.svg`} alt={item.name} />
+            <img src={`${import.meta.env.BASE_URL}assets/2d/${item.imagePath}.svg`} alt={item.name} />
             <span>{item.name}</span>
           </button>
         ))}

@@ -15,7 +15,7 @@ const printImgCache = new Map<string, HTMLImageElement>();
 function useFloorImages(floor: FloorState): boolean {
   const [ready, setReady] = useState(false);
   useEffect(() => {
-    const paths = [...new Set(floor.furniture.map(f => `/assets/2d/${f.path}.svg`))];
+    const paths = [...new Set(floor.furniture.map(f => `${import.meta.env.BASE_URL}assets/2d/${f.path}.svg`))];
     let loaded = 0;
     if (paths.length === 0) { setReady(true); return; }
     for (const src of paths) {
@@ -113,7 +113,7 @@ function PrintFloor({ floor, index }: { floor: FloorState; index: number }) {
 
           {/* Furniture */}
           {ready && floor.furniture.map(f => {
-            const img = printImgCache.get(`/assets/2d/${f.path}.svg`);
+            const img = printImgCache.get(`${import.meta.env.BASE_URL}assets/2d/${f.path}.svg`);
             return (
               <Group key={f.id} x={f.x} y={f.y} rotation={f.rot}>
                 {img ? <KImage image={img} width={f.w} height={f.h} /> : <Rect width={f.w} height={f.h} fill="#eee" stroke="#ccc" strokeWidth={1} />}

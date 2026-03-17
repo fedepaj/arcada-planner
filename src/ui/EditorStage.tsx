@@ -545,7 +545,7 @@ function SelectionHandles({ item, scale }: { item: FurnitureItem; scale: number 
 
 // ── Purely visual furniture ───────────────────────────────────
 function FurnitureVisual({ item, onImageLoaded }: { item: FurnitureItem; onImageLoaded: () => void }) {
-  const img = useImage(`/assets/2d/${item.path}.svg`, onImageLoaded);
+  const img = useImage(`${import.meta.env.BASE_URL}assets/2d/${item.path}.svg`, onImageLoaded);
 
   return (
     <Group x={item.x} y={item.y} rotation={item.rot}>
