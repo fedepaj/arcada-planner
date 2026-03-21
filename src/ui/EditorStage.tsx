@@ -89,6 +89,7 @@ export function EditorStage() {
   const panStart  = useRef({ x: 0, y: 0 });
   const posAtPan  = useRef({ x: 0, y: 0 });
   const dragRef   = useRef<DragState>(null);
+  const pinchRef  = useRef<{ dist: number; midX: number; midY: number; scale0: number; posX0: number; posY0: number } | null>(null);
 
   const [pos,   setPos]   = useState({ x: 0, y: 0 });
   const [scale, setScale] = useState(1);
@@ -111,8 +112,11 @@ export function EditorStage() {
   }
 
   useEffect(() => {
-    const x = TOOLBAR_W + (window.innerWidth - TOOLBAR_W - PANEL_W) / 2 - WORLD / 2;
-    const y = window.innerHeight / 2 - WORLD / 2;
+    const mobile = window.innerWidth < 768;
+    const tbW = mobile ? 0 : TOOLBAR_W;
+    const pW  = mobile ? 0 : PANEL_W;
+    const x = tbW + (window.innerWidth - tbW - pW) / 2 - WORLD / 2;
+    const y = (window.innerHeight - (mobile ? 56 : 0)) / 2 - WORLD / 2;
     updateStage(x, y, 1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -252,36 +256,9 @@ export function EditorStage() {
     return { x: newX, y: newY, w: newW, h: newH };
   }
 
-  // ── Stage event handlers ────────────────────────────────────
-  function onWheel(ev: KonvaEventObject<WheelEvent>) {
-    ev.evt.preventDefault();
-    const factor = ev.evt.deltaY < 0 ? 1.1 : 0.9;
-    const ns = Math.max(0.1, Math.min(20, scale * factor));
-    const ptr = stageRef.current!.getPointerPosition()!;
-    updateStage(ptr.x - (ptr.x - pos.x) / scale * ns, ptr.y - (ptr.y - pos.y) / scale * ns, ns);
-  }
-
-  function onMouseDown(e: KonvaEventObject<MouseEvent>) {
-    // Right-click: toggle wall exterior or start panning
-    if (e.evt.button === 2) {
-      const pt = getWorld();
-      if (pt) {
-        const wall = hitWall(pt.x, pt.y);
-        if (wall) { store.toggleExterior(wall.id); return; }
-      }
-      isPanning.current = true;
-      panStart.current = { x: e.evt.clientX, y: e.evt.clientY };
-      posAtPan.current = { ...pos };
-      const container = stageRef.current?.container();
-      if (container) container.style.cursor = 'grabbing';
-      return;
-    }
-    if (e.evt.button !== 0) return;
-
-    const pt = getWorld();
-    if (!pt) return;
-
-    // ── Remove tool ──
+  // ── Shared pointer logic ────────────────────────────────────
+  function handlePointerDown(pt: { x: number; y: number }) {
+    // Remove tool
     if (tool === Tool.Remove) {
       const fur = hitFurniture(pt.x, pt.y);
       if (fur) { store.deleteFurniture(fur.id); store.select(null); return; }
@@ -292,7 +269,7 @@ export function EditorStage() {
       return;
     }
 
-    // ── Wall-add tool ──
+    // Wall-add tool
     if (tool === Tool.WallAdd) {
       const node = hitNode(pt.x, pt.y);
       if (node) {
@@ -314,8 +291,7 @@ export function EditorStage() {
       return;
     }
 
-    // ── View / Edit tool ──
-    // 1. Check handles first (only if something is selected)
+    // Select tool — handles, furniture, nodes
     const handle = hitHandle(pt.x, pt.y);
     if (handle) {
       const item = floor.furniture.find(f => f.id === selectedId)!;
@@ -329,7 +305,6 @@ export function EditorStage() {
       return;
     }
 
-    // 2. Check furniture
     const fur = hitFurniture(pt.x, pt.y);
     if (fur) {
       store.select(fur.id);
@@ -337,7 +312,6 @@ export function EditorStage() {
       return;
     }
 
-    // 3. Check nodes (Select mode)
     if (tool === Tool.Select) {
       const node = hitNode(pt.x, pt.y);
       if (node) {
@@ -346,12 +320,74 @@ export function EditorStage() {
       }
     }
 
-    // Empty space
     store.select(null);
   }
 
+  function handlePointerDrag(pt: { x: number; y: number }) {
+    const d = dragRef.current;
+    if (!d) return;
+    if (d.type === 'furniture') {
+      store.updateFurniture(d.id, { x: pt.x - d.offX, y: pt.y - d.offY });
+    } else if (d.type === 'node') {
+      store.moveNode(d.id, pt.x - d.offX, pt.y - d.offY);
+    } else if (d.type === 'resize') {
+      const changes = applyResize(pt.x, pt.y, d.anchor, d.startItem);
+      store.updateFurniture(d.id, changes);
+    } else if (d.type === 'rotate') {
+      const currentAngle = Math.atan2(pt.y - d.centerY, pt.x - d.centerX);
+      let newRot = d.startRot + (currentAngle - d.startAngle) * 180 / Math.PI;
+      if (snapSize > 0) newRot = Math.round(newRot / 15) * 15;
+      store.updateFurniture(d.id, { rot: newRot });
+    }
+  }
+
+  function handlePointerUp() {
+    if (dragRef.current) {
+      const pt = getWorld();
+      if (pt) {
+        const d = dragRef.current;
+        if (d.type === 'furniture') {
+          const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
+          store.updateFurniture(d.id, p);
+        } else if (d.type === 'node') {
+          const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
+          store.moveNode(d.id, p.x, p.y);
+        }
+      }
+      dragRef.current = null;
+    }
+  }
+
+  // ── Mouse event handlers ───────────────────────────────────
+  function onWheel(ev: KonvaEventObject<WheelEvent>) {
+    ev.evt.preventDefault();
+    const factor = ev.evt.deltaY < 0 ? 1.1 : 0.9;
+    const ns = Math.max(0.1, Math.min(20, scale * factor));
+    const ptr = stageRef.current!.getPointerPosition()!;
+    updateStage(ptr.x - (ptr.x - pos.x) / scale * ns, ptr.y - (ptr.y - pos.y) / scale * ns, ns);
+  }
+
+  function onMouseDown(e: KonvaEventObject<MouseEvent>) {
+    if (e.evt.button === 2) {
+      const pt = getWorld();
+      if (pt) {
+        const wall = hitWall(pt.x, pt.y);
+        if (wall) { store.toggleExterior(wall.id); return; }
+      }
+      isPanning.current = true;
+      panStart.current = { x: e.evt.clientX, y: e.evt.clientY };
+      posAtPan.current = { ...pos };
+      const container = stageRef.current?.container();
+      if (container) container.style.cursor = 'grabbing';
+      return;
+    }
+    if (e.evt.button !== 0) return;
+    const pt = getWorld();
+    if (!pt) return;
+    handlePointerDown(pt);
+  }
+
   function onMouseMove(e: KonvaEventObject<MouseEvent>) {
-    // Panning
     if (isPanning.current) {
       updateStage(
         posAtPan.current.x + e.evt.clientX - panStart.current.x,
@@ -361,25 +397,10 @@ export function EditorStage() {
       return;
     }
 
-    // Dragging
     if (dragRef.current) {
       const pt = getWorld();
       if (!pt) return;
-      const d = dragRef.current;
-
-      if (d.type === 'furniture') {
-        store.updateFurniture(d.id, { x: pt.x - d.offX, y: pt.y - d.offY });
-      } else if (d.type === 'node') {
-        store.moveNode(d.id, pt.x - d.offX, pt.y - d.offY);
-      } else if (d.type === 'resize') {
-        const changes = applyResize(pt.x, pt.y, d.anchor, d.startItem);
-        store.updateFurniture(d.id, changes);
-      } else if (d.type === 'rotate') {
-        const currentAngle = Math.atan2(pt.y - d.centerY, pt.x - d.centerX);
-        let newRot = d.startRot + (currentAngle - d.startAngle) * 180 / Math.PI;
-        if (snapSize > 0) newRot = Math.round(newRot / 15) * 15;
-        store.updateFurniture(d.id, { rot: newRot });
-      }
+      handlePointerDrag(pt);
       return;
     }
 
@@ -425,22 +446,82 @@ export function EditorStage() {
       if (container) container.style.cursor = 'default';
       return;
     }
+    handlePointerUp();
+  }
 
+  // ── Touch event handlers ───────────────────────────────────
+  function onTouchStart(e: KonvaEventObject<TouchEvent>) {
+    e.evt.preventDefault();
+    const touches = e.evt.touches;
+
+    if (touches.length >= 2) {
+      // Start pinch/pan — cancel any ongoing drag
+      dragRef.current = null;
+      const t0 = touches[0], t1 = touches[1];
+      pinchRef.current = {
+        dist: dist(t0.clientX, t0.clientY, t1.clientX, t1.clientY),
+        midX: (t0.clientX + t1.clientX) / 2,
+        midY: (t0.clientY + t1.clientY) / 2,
+        scale0: scale, posX0: pos.x, posY0: pos.y,
+      };
+      return;
+    }
+
+    // Single touch = left click
+    const pt = getWorld();
+    if (!pt) return;
+    handlePointerDown(pt);
+  }
+
+  function onTouchMove(e: KonvaEventObject<TouchEvent>) {
+    e.evt.preventDefault();
+    const touches = e.evt.touches;
+
+    if (touches.length >= 2 && pinchRef.current) {
+      const t0 = touches[0], t1 = touches[1];
+      const newDist = dist(t0.clientX, t0.clientY, t1.clientX, t1.clientY);
+      const newMidX = (t0.clientX + t1.clientX) / 2;
+      const newMidY = (t0.clientY + t1.clientY) / 2;
+      const p = pinchRef.current;
+
+      const zoomFactor = newDist / p.dist;
+      const ns = Math.max(0.1, Math.min(20, p.scale0 * zoomFactor));
+
+      // Zoom centered on initial midpoint, then add pan offset
+      let nx = p.midX - (p.midX - p.posX0) / p.scale0 * ns;
+      let ny = p.midY - (p.midY - p.posY0) / p.scale0 * ns;
+      nx += newMidX - p.midX;
+      ny += newMidY - p.midY;
+
+      updateStage(nx, ny, ns);
+      return;
+    }
+
+    // Single touch drag
     if (dragRef.current) {
       const pt = getWorld();
-      if (pt) {
-        const d = dragRef.current;
-        if (d.type === 'furniture') {
-          const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
-          store.updateFurniture(d.id, p);
-        } else if (d.type === 'node') {
-          const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
-          store.moveNode(d.id, p.x, p.y);
-        }
-        // resize and rotate are already applied during move
-      }
-      dragRef.current = null;
+      if (!pt) return;
+      handlePointerDrag(pt);
+      return;
     }
+
+    // Wall preview on touch
+    if (tool === Tool.WallAdd && wallStartId !== null) {
+      const pt = getWorld();
+      if (pt) setPreviewPt(doSnap(pt.x, pt.y, snapSize));
+    }
+  }
+
+  function onTouchEnd(e: KonvaEventObject<TouchEvent>) {
+    e.evt.preventDefault();
+
+    // If pinching and fingers lifted, clear pinch state
+    if (pinchRef.current) {
+      if (e.evt.touches.length < 2) pinchRef.current = null;
+      return;
+    }
+
+    handlePointerUp();
   }
 
   const startNode = wallStartId !== null ? floor.nodes.find(n => n.id === wallStartId) : null;
@@ -453,8 +534,9 @@ export function EditorStage() {
       width={size.w} height={size.h}
       x={pos.x} y={pos.y} scaleX={scale} scaleY={scale}
       onWheel={onWheel} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
       onContextMenu={(e: KonvaEventObject<MouseEvent>) => e.evt.preventDefault()}
-      style={{ position: 'fixed', top: 0, left: 0, zIndex: 0 }}
+      style={{ position: 'fixed', top: 0, left: 0, zIndex: 0, touchAction: 'none' }}
     >
       {/* Grid */}
       <Layer listening={false}>

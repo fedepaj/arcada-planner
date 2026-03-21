@@ -43,7 +43,7 @@ function SelectionPanel() {
   const rot  = Math.round(item.rot);
 
   return (
-    <div className="selection-panel" style={{ left: Math.max(8, sx - 170), top: Math.min(window.innerHeight - 50, Math.max(8, sy)) }}>
+    <div className="selection-panel" style={{ left: Math.max(8, Math.min(sx - 170, window.innerWidth - 340)), top: Math.min(window.innerHeight - (window.innerWidth < 768 ? 110 : 50), Math.max(8, sy)) }}>
       <label>W <input type="number" value={wCm} min={1}
         onChange={e => updateFurniture(selectedId, { w: +e.target.value / 100 * METER })} /> cm</label>
       <label>H <input type="number" value={hCm} min={1}
