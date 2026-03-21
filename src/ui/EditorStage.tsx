@@ -11,6 +11,7 @@ const TOOLBAR_W = 80;
 const PANEL_W = 260;
 const NODE_RADIUS = 9;
 const NODE_HIT_RADIUS = 14;
+const NODE_HIT_RADIUS_WALL = 30; // generous radius for wall-mode node snapping (touch-friendly)
 const HANDLE_SIZE = 8;
 const HANDLE_HIT = 10;
 const ROT_HANDLE_DIST = 30;
@@ -204,8 +205,8 @@ export function EditorStage() {
     return null;
   }
 
-  function hitNode(wx: number, wy: number): WallNode | null {
-    const thr = Math.max(NODE_HIT_RADIUS, NODE_HIT_RADIUS / scale);
+  function hitNode(wx: number, wy: number, radius = NODE_HIT_RADIUS): WallNode | null {
+    const thr = Math.max(radius, radius / scale);
     let best: WallNode | null = null, bestD = thr;
     for (const n of floor.nodes) {
       const d = dist(wx, wy, n.x, n.y);
@@ -269,9 +270,9 @@ export function EditorStage() {
       return;
     }
 
-    // Wall-add tool
+    // Wall-add tool — use generous hit radius for touch-friendliness
     if (tool === Tool.WallAdd) {
-      const node = hitNode(pt.x, pt.y);
+      const node = hitNode(pt.x, pt.y, NODE_HIT_RADIUS_WALL);
       if (node) {
         if (wallStartId === node.id) store.setWallStart(null);
         else if (wallStartId !== null) { store.addWall(wallStartId, node.id); store.setWallStart(node.id); }
@@ -284,7 +285,15 @@ export function EditorStage() {
         if (m !== null) store.setWallStart(m);
         return;
       }
+      // No nearby node or wall — create a new node, snapped to grid
       const p = doSnap(pt.x, pt.y, snapSize);
+      // Double-check: is there already a node at the snapped position?
+      const existing = hitNode(p.x, p.y, NODE_HIT_RADIUS_WALL);
+      if (existing) {
+        if (wallStartId !== null && wallStartId !== existing.id) store.addWall(wallStartId, existing.id);
+        store.setWallStart(existing.id);
+        return;
+      }
       const id = store.addNode(p.x, p.y);
       if (wallStartId !== null) store.addWall(wallStartId, id);
       store.setWallStart(id);
