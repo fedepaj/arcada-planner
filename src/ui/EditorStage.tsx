@@ -66,7 +66,10 @@ type DragState =
   | { type: 'node'; id: number; offX: number; offY: number }
   | { type: 'resize'; id: number; anchor: HandleAnchor; startItem: FurnitureItem }
   | { type: 'rotate'; id: number; centerX: number; centerY: number; startAngle: number; startRot: number }
+  | { type: 'wall-draw'; startNodeId: number; startPt: { x: number; y: number }; moved: boolean }
   | null;
+
+const WALL_DRAG_THRESHOLD = 8; // px in world coords — distinguishes tap from drag
 
 // ── Image cache (global, never GC'd per session) ─────────────
 const imgCache = new Map<string, HTMLImageElement>();
@@ -270,33 +273,41 @@ export function EditorStage() {
       return;
     }
 
-    // Wall-add tool — use generous hit radius for touch-friendliness
+    // Wall-add tool — drag-to-draw: down = start node, drag = preview, up = end node + wall
     if (tool === Tool.WallAdd) {
-      const node = hitNode(pt.x, pt.y, NODE_HIT_RADIUS_WALL);
-      if (node) {
-        if (wallStartId === node.id) store.setWallStart(null);
-        else if (wallStartId !== null) { store.addWall(wallStartId, node.id); store.setWallStart(node.id); }
-        else store.setWallStart(node.id);
+      // Try to snap to existing node or wall split
+      const existingNode = hitNode(pt.x, pt.y, NODE_HIT_RADIUS_WALL);
+      if (existingNode) {
+        // If chaining from a previous wall, connect first
+        if (wallStartId !== null && wallStartId !== existingNode.id) {
+          store.addWall(wallStartId, existingNode.id);
+        }
+        store.setWallStart(existingNode.id);
+        dragRef.current = { type: 'wall-draw', startNodeId: existingNode.id, startPt: pt, moved: false };
         return;
       }
       const wall = hitWall(pt.x, pt.y);
       if (wall) {
         const m = store.splitWall(wall.id, pt.x, pt.y);
-        if (m !== null) store.setWallStart(m);
+        if (m !== null) {
+          store.setWallStart(m);
+          dragRef.current = { type: 'wall-draw', startNodeId: m, startPt: pt, moved: false };
+        }
         return;
       }
-      // No nearby node or wall — create a new node, snapped to grid
+      // Empty space — create a new node
       const p = doSnap(pt.x, pt.y, snapSize);
-      // Double-check: is there already a node at the snapped position?
-      const existing = hitNode(p.x, p.y, NODE_HIT_RADIUS_WALL);
-      if (existing) {
-        if (wallStartId !== null && wallStartId !== existing.id) store.addWall(wallStartId, existing.id);
-        store.setWallStart(existing.id);
-        return;
+      const nearby = hitNode(p.x, p.y, NODE_HIT_RADIUS_WALL);
+      let startId: number;
+      if (nearby) {
+        if (wallStartId !== null && wallStartId !== nearby.id) store.addWall(wallStartId, nearby.id);
+        startId = nearby.id;
+      } else {
+        startId = store.addNode(p.x, p.y);
+        if (wallStartId !== null) store.addWall(wallStartId, startId);
       }
-      const id = store.addNode(p.x, p.y);
-      if (wallStartId !== null) store.addWall(wallStartId, id);
-      store.setWallStart(id);
+      store.setWallStart(startId);
+      dragRef.current = { type: 'wall-draw', startNodeId: startId, startPt: pt, moved: false };
       return;
     }
 
@@ -347,24 +358,71 @@ export function EditorStage() {
       let newRot = d.startRot + (currentAngle - d.startAngle) * 180 / Math.PI;
       if (snapSize > 0) newRot = Math.round(newRot / 15) * 15;
       store.updateFurniture(d.id, { rot: newRot });
+    } else if (d.type === 'wall-draw') {
+      // Mark as dragged once past threshold
+      if (!d.moved && dist(pt.x, pt.y, d.startPt.x, d.startPt.y) > WALL_DRAG_THRESHOLD / scale) {
+        d.moved = true;
+      }
+      if (d.moved) {
+        // Show wall preview to snapped endpoint (or snap to nearby node)
+        const nearNode = hitNode(pt.x, pt.y, NODE_HIT_RADIUS_WALL);
+        if (nearNode) {
+          setPreviewPt({ x: nearNode.x, y: nearNode.y });
+        } else {
+          setPreviewPt(doSnap(pt.x, pt.y, snapSize));
+        }
+      }
     }
   }
 
   function handlePointerUp() {
-    if (dragRef.current) {
-      const pt = getWorld();
-      if (pt) {
-        const d = dragRef.current;
-        if (d.type === 'furniture') {
-          const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
-          store.updateFurniture(d.id, p);
-        } else if (d.type === 'node') {
-          const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
-          store.moveNode(d.id, p.x, p.y);
+    if (!dragRef.current) return;
+    const d = dragRef.current;
+    const pt = getWorld();
+
+    if (d.type === 'wall-draw') {
+      dragRef.current = null;
+      if (!d.moved) {
+        // Tap without drag → end the chain (deselect wallStart)
+        store.setWallStart(null);
+        setPreviewPt(null);
+        return;
+      }
+      // Drag completed → create end node + wall
+      if (!pt) { setPreviewPt(null); return; }
+      const nearNode = hitNode(pt.x, pt.y, NODE_HIT_RADIUS_WALL);
+      let endId: number;
+      if (nearNode && nearNode.id !== d.startNodeId) {
+        endId = nearNode.id;
+      } else if (nearNode && nearNode.id === d.startNodeId) {
+        // Dragged back to start — cancel
+        setPreviewPt(null);
+        return;
+      } else {
+        const p = doSnap(pt.x, pt.y, snapSize);
+        const existing = hitNode(p.x, p.y, NODE_HIT_RADIUS_WALL);
+        if (existing && existing.id !== d.startNodeId) {
+          endId = existing.id;
+        } else {
+          endId = store.addNode(p.x, p.y);
         }
       }
-      dragRef.current = null;
+      store.addWall(d.startNodeId, endId);
+      store.setWallStart(endId); // chain: ready for next drag
+      setPreviewPt(null);
+      return;
     }
+
+    if (pt) {
+      if (d.type === 'furniture') {
+        const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
+        store.updateFurniture(d.id, p);
+      } else if (d.type === 'node') {
+        const p = doSnap(pt.x - d.offX, pt.y - d.offY, snapSize);
+        store.moveNode(d.id, p.x, p.y);
+      }
+    }
+    dragRef.current = null;
   }
 
   // ── Mouse event handlers ───────────────────────────────────
@@ -413,11 +471,11 @@ export function EditorStage() {
       return;
     }
 
-    // Wall preview
+    // Wall hover preview (mouse only — no button pressed, chain active)
     if (tool === Tool.WallAdd && wallStartId !== null) {
       const pt = getWorld();
       if (pt) setPreviewPt(doSnap(pt.x, pt.y, snapSize));
-    } else if (previewPt) {
+    } else if (previewPt && !dragRef.current) {
       setPreviewPt(null);
     }
 
@@ -506,18 +564,12 @@ export function EditorStage() {
       return;
     }
 
-    // Single touch drag
+    // Single touch drag (furniture, nodes, resize, rotate, wall-draw)
     if (dragRef.current) {
       const pt = getWorld();
       if (!pt) return;
       handlePointerDrag(pt);
       return;
-    }
-
-    // Wall preview on touch
-    if (tool === Tool.WallAdd && wallStartId !== null) {
-      const pt = getWorld();
-      if (pt) setPreviewPt(doSnap(pt.x, pt.y, snapSize));
     }
   }
 
